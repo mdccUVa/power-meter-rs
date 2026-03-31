@@ -24,11 +24,20 @@
 extern "C" {
 #endif // __cplusplus
 
-void pwmr_launch_monitoring_loop(uint64_t sampling_interval_ms);
-void pwmr_stop_monitoring_loop(void);
-void pwmr_set_output_dir(const char *path_ptr);
-void pwmr_set_cpu_out_filename(const char *filename_ptr);
-void pwmr_set_gpu_out_filename(const char *filename_ptr);
+typedef enum PwrmError {
+  PWRM_SUCCESS = 0,
+  PWRM_NOT_ENOUGH_DATA = -1,
+} pwrmError_t;
+
+void pwrm_launch_monitoring_loop(uint64_t sampling_interval_ms);
+void pwrm_stop_monitoring_loop(void);
+pwrmError_t pwrm_get_avg_cpu_power(double *avg_power_out);
+pwrmError_t pwrm_get_avg_gpu_power(double *avg_power_out);
+pwrmError_t pwrm_get_total_cpu_energy(double *total_energy_out);
+pwrmError_t pwrm_get_total_gpu_energy(double *total_energy_out);
+void pwrm_set_output_dir(const char *path_ptr);
+void pwrm_set_cpu_out_filename(const char *filename_ptr);
+void pwrm_set_gpu_out_filename(const char *filename_ptr);
 
 #ifdef __cplusplus
 }

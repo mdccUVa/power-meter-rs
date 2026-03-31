@@ -159,21 +159,23 @@ pub(super) struct CPUMonitor {
     vendor_id: Vendor,
     first_node_core: Box<Vec<u32>>,
     num_cores: u32,
+    history: Vec<EnergyData>,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub(super) enum RAPLUtilsErrorKind {
     UnknownVendor,
     BadSystemFile,
     UnsupportedDomain,
     UnsupportedOp,
     MSRRead,
+    NotEnoughData,
 }
 
 #[derive(Debug)]
 pub(super) struct RAPLUtilsError {
-    kind: RAPLUtilsErrorKind,
-    message: String,
+    pub(super) kind: RAPLUtilsErrorKind,
+    pub(super) message: String,
 }
 
 impl Display for RAPLUtilsError {
@@ -336,6 +338,7 @@ impl CPUMonitor {
             vendor_id: vendor,
             first_node_core,
             num_cores,
+            history: Vec::new(),
         })
     }
 
@@ -466,7 +469,7 @@ impl CPUMonitor {
     }
 
     pub(super) fn update_energy_data(
-        &self,
+        &mut self,
         output_data: &mut EnergyData,
         previous_data: &EnergyAux,
         current_data: &EnergyAux,
@@ -479,6 +482,51 @@ impl CPUMonitor {
         output_data.energy = energy_diff;
         // Update the total energy consumed by this node:
         output_data.total_energy += energy_diff;
+
+        // Update the history:
+        self.history.push(output_data.clone());
+    }
+
+    pub(super) fn get_average_power(&self) -> Result<f64, RAPLUtilsError> {
+        if self.history.is_empty() {
+            return Err(RAPLUtilsError {
+                kind: RAPLUtilsErrorKind::NotEnoughData,
+                message: "No measurements have been taken yet".to_string(),
+            });
+        } else if self.history.len() <= 2 {
+            return Err(RAPLUtilsError {
+                kind: RAPLUtilsErrorKind::NotEnoughData,
+                message: "At least three measurements are required to compute the average power"
+                    .to_string(),
+            });
+        }
+        let mut history = self.history.clone();
+        // Remove first (heat-up) and last (cool-down) measurements,
+        // as they are likely to be outliers:
+        // TODO: Document
+        history.remove(0);
+        history.pop();
+
+        let average_power = history.iter().map(|d| d.power).sum::<f64>() / history.len() as f64;
+
+        Ok(average_power)
+    }
+
+    pub(super) fn get_total_energy(&self) -> Result<f64, RAPLUtilsError> {
+        if self.history.is_empty() {
+            return Err(RAPLUtilsError {
+                kind: RAPLUtilsErrorKind::NotEnoughData,
+                message: "No measurements have been taken yet".to_string(),
+            });
+        }
+
+        let total_energy = self
+            .history
+            .last()
+            .expect("History is empty, although it was checked to be non-empty")
+            .total_energy;
+
+        Ok(total_energy)
     }
 
     pub(super) fn get_processor_tdp(&mut self) -> Result<f64, RAPLUtilsError> {

@@ -65,20 +65,22 @@ pub(super) struct GPUMonitor {
     num_gpus: usize,
     device_handles: Box<Vec<NvmlDevice>>,
     can_read_energy: Box<Vec<bool>>,
+    history: Vec<EnergyData>,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub(super) enum NVMLUtilsErrorKind {
     UninitializedDevice,
     InvalidArgument,
     UnsupportedDevice,
-    Other,
+    NVMLOther,
+    NotEnoughData,
 }
 
 #[derive(Debug)]
 pub(super) struct NVMLUtilsError {
-    kind: NVMLUtilsErrorKind,
-    message: String,
+    pub(super) kind: NVMLUtilsErrorKind,
+    pub(super) message: String,
 }
 
 impl Display for NVMLUtilsError {
@@ -116,6 +118,7 @@ impl GPUMonitor {
             num_gpus,
             device_handles,
             can_read_energy,
+            history: Vec::new(),
         }
     }
 
@@ -153,7 +156,7 @@ impl GPUMonitor {
             }
             if nvml_error != NVML_SUCCESS {
                 return Err(NVMLUtilsError {
-                    kind: NVMLUtilsErrorKind::Other,
+                    kind: NVMLUtilsErrorKind::NVMLOther,
                     message: format!(
                         "Failed to read power for GPU {}: error code {}",
                         i, nvml_error
@@ -198,6 +201,46 @@ impl GPUMonitor {
             .sum::<f64>();
         output_data.energy = energy_diff;
         output_data.total_energy += energy_diff;
+
+        // Update the history:
+        self.history.push(output_data.clone());
+    }
+
+    pub(super) fn get_average_power(&self) -> Result<f64, NVMLUtilsError> {
+        if self.history.len() <= 2 {
+            return Err(NVMLUtilsError {
+                kind: NVMLUtilsErrorKind::NotEnoughData,
+                message: "At least three measurements are required to compute average power"
+                    .to_string(),
+            });
+        }
+        let mut history = self.history.clone();
+        // Remove first (heat-up) and last (cool-down) measurements,
+        // as they are likely to be outliers:
+        // TODO: Document
+        history.remove(0);
+        history.pop();
+
+        let average_power = history.iter().map(|d| d.power).sum::<f64>() / history.len() as f64;
+
+        Ok(average_power)
+    }
+
+    pub(super) fn get_total_energy(&self) -> Result<f64, NVMLUtilsError> {
+        if self.history.is_empty() {
+            return Err(NVMLUtilsError {
+                kind: NVMLUtilsErrorKind::NotEnoughData,
+                message: "No measurements have been taken yet".to_string(),
+            });
+        }
+
+        let total_energy = self
+            .history
+            .last()
+            .expect("History is empty, althouh it was checked to be non-empty")
+            .total_energy;
+
+        Ok(total_energy)
     }
 }
 

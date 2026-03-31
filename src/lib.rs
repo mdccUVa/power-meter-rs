@@ -28,14 +28,16 @@ use std::{
     time::Duration,
 };
 
-use nvml_utils::{EnergyAux as NVMLAux, EnergyData as NVMLData, GPUMonitor};
-use rapl_utils::{CPUMonitor, EnergyAux as RAPLAux, EnergyData as RAPLData};
+use nvml_utils::{EnergyAux as NVMLAux, EnergyData as NVMLData, GPUMonitor, NVMLUtilsErrorKind};
+use rapl_utils::{CPUMonitor, EnergyAux as RAPLAux, EnergyData as RAPLData, RAPLUtilsErrorKind};
 
 #[derive(Debug)]
 struct MonitoringConfig {
     do_monitoring: bool,
     monitoring_thread: Option<std::thread::JoinHandle<()>>,
     output_dir: String,
+    cpu_monitor: CPUMonitor,
+    gpu_monitor: GPUMonitor,
     cpu_out_filename: String,
     gpu_out_filename: String,
     cpu_out: Option<File>,
@@ -47,6 +49,11 @@ impl Default for MonitoringConfig {
         Self {
             do_monitoring: true,
             monitoring_thread: None,
+            // Intel: Initialize internal counters
+            cpu_monitor: CPUMonitor::new()
+                .expect("[POWER METER] An error was encountered during initialization"),
+            gpu_monitor: GPUMonitor::new(),
+            // CUDA: Initialize NVML, number of GPUs, and device handles
             output_dir: "power_meter_out".to_string(),
             cpu_out_filename: "cpu".to_string(),
             gpu_out_filename: "gpu".to_string(),
@@ -56,7 +63,10 @@ impl Default for MonitoringConfig {
     }
 }
 
-fn monitoring_loop(sampling_interval_ms: u64, rapl: &mut CPUMonitor, nvml: &mut GPUMonitor) {
+static CONFIG: LazyLock<Mutex<MonitoringConfig>> =
+    LazyLock::new(|| Mutex::new(MonitoringConfig::default()));
+
+fn monitoring_loop(sampling_interval_ms: u64) {
     log::info!(
         "Starting monitoring with period {} ms",
         sampling_interval_ms
@@ -72,20 +82,24 @@ fn monitoring_loop(sampling_interval_ms: u64, rapl: &mut CPUMonitor, nvml: &mut 
     let mut current_cuda_data = NVMLAux::default();
     let mut cuda_results = NVMLData::default();
 
-    // Get the initial energy readings:
-    // CPU: Get the current energy measurement for RAPL's package domain
-    rapl.update_package_energy(&mut cpu_pkg_data)
-        .expect("[POWER METER] Failed to read CPU energy data");
-    log::debug!("Read initial CPU energy data");
-    // CUDA
-    nvml.update_gpu_energy(&mut cuda_data)
-        .expect("[POWER METER] Failed to read GPU energy data");
-    log::debug!("Read initial GPU energy data");
-
-    // Write the header for the output files:
     {
         let mut config = CONFIG.lock().unwrap();
 
+        // Get the initial energy readings:
+        // CPU: Get the current energy measurement for RAPL's package domain
+        config
+            .cpu_monitor
+            .update_package_energy(&mut cpu_pkg_data)
+            .expect("[POWER METER] Failed to read CPU energy data");
+        log::debug!("Read initial CPU energy data");
+        // CUDA
+        config
+            .gpu_monitor
+            .update_gpu_energy(&mut cuda_data)
+            .expect("[POWER METER] Failed to read GPU energy data");
+        log::debug!("Read initial GPU energy data");
+
+        // Write the header for the output files:
         let output_header = "Power,Energy,Total energy";
         if let Some(cpu_out) = &mut config.cpu_out {
             writeln!(cpu_out, "{}", output_header)
@@ -102,28 +116,40 @@ fn monitoring_loop(sampling_interval_ms: u64, rapl: &mut CPUMonitor, nvml: &mut 
         // Sleep for the specified sampling interval:
         thread::sleep(Duration::from_millis(sampling_interval_ms));
 
-        // CPU: Update energy measurements
-        rapl.update_package_energy(&mut current_cpu_pkg_data)
-            .expect("[POWER METER] Failed to read CPU energy data");
-        // CPU: Compute energy and average power usage for this interval, update total energy
-        // consumption
-        rapl.update_energy_data(&mut cpu_pkg_results, &cpu_pkg_data, &current_cpu_pkg_data);
-
-        // CUDA: Update energy measurements
-        nvml.update_gpu_energy(&mut current_cuda_data)
-            .expect("[POWER METER] Failed to read GPU energy data");
-        // CUDA: Compute energy and average power usage for this interval, update total energy
-        // consumption
-        nvml.update_energy_data(&mut cuda_results, &cuda_data, &current_cuda_data);
-
-        // Swap structs for the next iteration:
-        swap(&mut cpu_pkg_data, &mut current_cpu_pkg_data);
-        swap(&mut cuda_data, &mut current_cuda_data);
-
-        log::debug!("Writing results to file.");
         {
             let mut config = CONFIG.lock().unwrap();
 
+            // CPU: Update energy measurements
+            config
+                .cpu_monitor
+                .update_package_energy(&mut current_cpu_pkg_data)
+                .expect("[POWER METER] Failed to read CPU energy data");
+            // CPU: Compute energy and average power usage for this interval, update total energy
+            // consumption
+            config.cpu_monitor.update_energy_data(
+                &mut cpu_pkg_results,
+                &cpu_pkg_data,
+                &current_cpu_pkg_data,
+            );
+
+            // CUDA: Update energy measurements
+            config
+                .gpu_monitor
+                .update_gpu_energy(&mut current_cuda_data)
+                .expect("[POWER METER] Failed to read GPU energy data");
+            // CUDA: Compute energy and average power usage for this interval, update total energy
+            // consumption
+            config.gpu_monitor.update_energy_data(
+                &mut cuda_results,
+                &cuda_data,
+                &current_cuda_data,
+            );
+
+            // Swap structs for the next iteration:
+            swap(&mut cpu_pkg_data, &mut current_cpu_pkg_data);
+            swap(&mut cuda_data, &mut current_cuda_data);
+
+            log::debug!("Writing results to file.");
             if let Some(cpu_out) = &mut config.cpu_out {
                 writeln!(
                     cpu_out,
@@ -148,11 +174,8 @@ fn monitoring_loop(sampling_interval_ms: u64, rapl: &mut CPUMonitor, nvml: &mut 
     }
 }
 
-static CONFIG: LazyLock<Mutex<MonitoringConfig>> =
-    LazyLock::new(|| Mutex::new(MonitoringConfig::default()));
-
 #[unsafe(no_mangle)]
-pub extern "C" fn pwmr_launch_monitoring_loop(sampling_interval_ms: u64) {
+pub extern "C" fn pwrm_launch_monitoring_loop(sampling_interval_ms: u64) {
     let _ = env_logger::try_init();
 
     let mut config = CONFIG.lock().unwrap();
@@ -167,23 +190,15 @@ pub extern "C" fn pwmr_launch_monitoring_loop(sampling_interval_ms: u64) {
     config.gpu_out =
         Some(File::create(gpu_out_path).expect("[POWER METER] Failed to create GPU output file"));
 
-    // Intel: Initialize internal counters
-    let mut cpu_monitor = rapl_utils::CPUMonitor::new()
-        .expect("[POWER METER] An error was encountered during initialization");
-    // CUDA: Initialize NVML, number of GPUs, and device handles
-    let mut gpu_monitor = nvml_utils::GPUMonitor::new();
-
     // Launch monitoring on a separate thread:
     config.do_monitoring = true;
-    config.monitoring_thread = Some(thread::spawn(move || {
-        monitoring_loop(sampling_interval_ms, &mut cpu_monitor, &mut gpu_monitor)
-    }));
+    config.monitoring_thread = Some(thread::spawn(move || monitoring_loop(sampling_interval_ms)));
 
     log::debug!("Spawned monitoring loop");
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwmr_stop_monitoring_loop() {
+pub extern "C" fn pwrm_stop_monitoring_loop() {
     log::debug!("Requested monitoring loop stop");
 
     // Signal monitoring thread to stop and get its handle
@@ -208,8 +223,110 @@ pub extern "C" fn pwmr_stop_monitoring_loop() {
     log::info!("Stopped monitoring loop");
 }
 
+#[repr(C)]
+pub enum PwrmError {
+    Success = 0,
+    NotEnoughData = -1,
+}
+
 #[unsafe(no_mangle)]
-pub extern "C" fn pwmr_set_output_dir(path_ptr: *const std::os::raw::c_char) {
+pub extern "C" fn pwrm_get_avg_cpu_power(avg_power_out: *mut std::os::raw::c_double) -> PwrmError {
+    let config = CONFIG.lock().unwrap();
+
+    let avg_power = config.cpu_monitor.get_average_power();
+    match avg_power {
+        Ok(power) => {
+            unsafe {
+                *avg_power_out = power;
+            }
+            PwrmError::Success as PwrmError
+        }
+        Err(e) => {
+            assert!(e.kind == RAPLUtilsErrorKind::NotEnoughData);
+            log::error!("Failed to get average CPU power: {}", e);
+            unsafe {
+                *avg_power_out = 0.0;
+            };
+            PwrmError::NotEnoughData as PwrmError
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pwrm_get_avg_gpu_power(avg_power_out: *mut std::os::raw::c_double) -> PwrmError {
+    let config = CONFIG.lock().unwrap();
+
+    let avg_power = config.gpu_monitor.get_average_power();
+    match avg_power {
+        Ok(power) => {
+            unsafe {
+                *avg_power_out = power;
+            }
+            PwrmError::Success as PwrmError
+        }
+        Err(e) => {
+            assert!(e.kind == NVMLUtilsErrorKind::NotEnoughData);
+            log::error!("Failed to get average GPU power: {}", e);
+            unsafe {
+                *avg_power_out = 0.0;
+            };
+            PwrmError::NotEnoughData as PwrmError
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pwrm_get_total_cpu_energy(
+    total_energy_out: *mut std::os::raw::c_double,
+) -> PwrmError {
+    let config = CONFIG.lock().unwrap();
+
+    let total_energy = config.cpu_monitor.get_total_energy();
+    match total_energy {
+        Ok(energy) => {
+            unsafe {
+                *total_energy_out = energy;
+            }
+            PwrmError::Success as PwrmError
+        }
+        Err(e) => {
+            assert!(e.kind == RAPLUtilsErrorKind::NotEnoughData);
+            log::error!("Failed to get total CPU energy: {}", e);
+            unsafe {
+                *total_energy_out = 0.0;
+            };
+            PwrmError::NotEnoughData as PwrmError
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pwrm_get_total_gpu_energy(
+    total_energy_out: *mut std::os::raw::c_double,
+) -> PwrmError {
+    let config = CONFIG.lock().unwrap();
+
+    let total_energy = config.gpu_monitor.get_total_energy();
+    match total_energy {
+        Ok(energy) => {
+            unsafe {
+                *total_energy_out = energy;
+            }
+            PwrmError::Success
+        }
+        Err(e) => {
+            assert!(e.kind == NVMLUtilsErrorKind::NotEnoughData);
+            log::error!("Failed to get total GPU energy: {}", e);
+            unsafe {
+                *total_energy_out = 0.0;
+            };
+            PwrmError::NotEnoughData
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pwrm_set_output_dir(path_ptr: *const std::os::raw::c_char) {
     let mut config = CONFIG.lock().unwrap();
 
     let path_arr = unsafe { std::ffi::CStr::from_ptr(path_ptr) };
@@ -223,7 +340,7 @@ pub extern "C" fn pwmr_set_output_dir(path_ptr: *const std::os::raw::c_char) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwmr_set_cpu_out_filename(filename_ptr: *const std::os::raw::c_char) {
+pub extern "C" fn pwrm_set_cpu_out_filename(filename_ptr: *const std::os::raw::c_char) {
     let mut config = CONFIG.lock().unwrap();
 
     let filename_arr = unsafe { std::ffi::CStr::from_ptr(filename_ptr) };
@@ -237,7 +354,7 @@ pub extern "C" fn pwmr_set_cpu_out_filename(filename_ptr: *const std::os::raw::c
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwmr_set_gpu_out_filename(filename_ptr: *const std::os::raw::c_char) {
+pub extern "C" fn pwrm_set_gpu_out_filename(filename_ptr: *const std::os::raw::c_char) {
     let mut config = CONFIG.lock().unwrap();
 
     let filename_arr = unsafe { std::ffi::CStr::from_ptr(filename_ptr) };
