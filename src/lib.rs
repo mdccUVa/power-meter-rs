@@ -73,7 +73,7 @@ fn monitoring_loop(sampling_interval_ms: u64) {
     let mut current_cpu_pkg_data = RAPLAux::default();
     let mut cpu_pkg_results = RAPLData::default();
 
-    // Structs used to take measurements from Nvidia NVML:
+    // Structs used to take measurements from NVIDIA's NVML library:
     let mut cuda_data = NVMLAux::default();
     let mut current_cuda_data = NVMLAux::default();
     let mut cuda_results = NVMLData::default();

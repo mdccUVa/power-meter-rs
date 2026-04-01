@@ -2,7 +2,7 @@
 
 This is a Rust reimplementation of [apt-sim's Power Meter library](https://github.com/apt-sim/power_meter), with certain ehancements and improvements.
 
-This library provides a software power usage and energy consumption meter for Intel and AMD CPUs, and NVIDIA GPUs. On CPU it reads from Intel and AMD's RAPL interfaces, while on GPU it uses Nvidia's NVML interface.
+This library provides a software power usage and energy consumption meter for Intel and AMD CPUs, and NVIDIA GPUs. On CPU it reads from Intel and AMD's RAPL interfaces, while on GPU it uses NVIDIA's NVML interface.
 
 ## Usage
 
