@@ -48,6 +48,9 @@ pwrmError_t pwrm_set_gpu_out_filename(const char *filename_ptr);
 
 Therefore, an example program that uses `libpwrm` to measure power usage and energy consumption could be the following:
 ```c
+#include <stdlib.h>
+#include <stdio.h>
+
 #include "power_meter.h"
 
 int main(void) {
