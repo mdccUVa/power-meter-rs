@@ -242,6 +242,10 @@ impl GPUMonitor {
 
         Ok(total_energy)
     }
+
+    pub(super) fn reset_data(&mut self) {
+        self.history.clear();
+    }
 }
 
 impl Drop for GPUMonitor {

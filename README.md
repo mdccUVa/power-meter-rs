@@ -21,19 +21,23 @@ To use it in your C/C++ project, include `include/power_meter.h` in your relevan
 `power_meter.h` exposes the following functions:
 
 ```c
-// Starts monitoring the power usage and energy consumption of the system's CPU and GPU at the specified sampling interval (in milliseconds).
+// Starts monitoring the power usage and energy consumption of the system's CPU and GPU
+// at the specified sampling interval (in milliseconds).
 void pwrm_launch_monitoring_loop(uint64_t sampling_interval_ms);
 // Stops monitoring the power usage and energy consumption of the system.
 pwrmError_t pwrm_stop_monitoring_loop(void);
 
-// Gets the CPU's average power usage so far:
+// Gets the CPU's average power usage since monitoring started or the last counters reset:
 pwrmError_t pwrm_get_avg_cpu_power(double *avg_power_out);
-// Gets the GPU's average power usage so far:
+// Gets the GPU's average power usage since monitoring started or the last counters reset:
 pwrmError_t pwrm_get_avg_gpu_power(double *avg_power_out);
-// Gets the CPU's total energy consumption so far:
+// Gets the CPU's total energy consumption since monitoring started or the last counters reset:
 pwrmError_t pwrm_get_total_cpu_energy(double *total_energy_out);
-// Gets the CPU's total energy consumption so far:
+// Gets the CPU's total energy consumption since monitoring started or the last counters reset:
 pwrmError_t pwrm_get_total_gpu_energy(double *total_energy_out);
+// Resets the power usage and energy consumption counters to zero,
+// discarding all previously collected data:
+void pwrm_reset_counters(void);
 
 // Sets the path of the output directory where the measured data will be saved
 // (optional, "power_meter_out" by default, NULL uses the current directory).

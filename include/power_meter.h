@@ -37,6 +37,7 @@ pwrmResult_t pwrm_get_avg_cpu_power(double *avg_power_out);
 pwrmResult_t pwrm_get_avg_gpu_power(double *avg_power_out);
 pwrmResult_t pwrm_get_total_cpu_energy(double *total_energy_out);
 pwrmResult_t pwrm_get_total_gpu_energy(double *total_energy_out);
+void pwrm_reset_counters(void);
 pwrmResult_t pwrm_set_output_dir(const char *path_ptr);
 pwrmResult_t pwrm_set_cpu_out_filename(const char *filename_ptr);
 pwrmResult_t pwrm_set_gpu_out_filename(const char *filename_ptr);

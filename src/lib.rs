@@ -34,6 +34,7 @@ use rapl_utils::{CPUMonitor, EnergyAux as RAPLAux, EnergyData as RAPLData, RAPLU
 #[derive(Debug)]
 struct MonitoringConfig {
     do_monitoring: bool,
+    do_reset: bool,
     monitoring_thread: Option<std::thread::JoinHandle<()>>,
     output_dir: String,
     cpu_monitor: CPUMonitor,
@@ -46,6 +47,7 @@ impl Default for MonitoringConfig {
     fn default() -> Self {
         Self {
             do_monitoring: true,
+            do_reset: true,
             monitoring_thread: None,
             // Intel: Initialize internal counters
             cpu_monitor: CPUMonitor::new()
@@ -77,24 +79,6 @@ fn monitoring_loop(sampling_interval_ms: u64) {
     let mut cuda_data = NVMLAux::default();
     let mut current_cuda_data = NVMLAux::default();
     let mut cuda_results = NVMLData::default();
-
-    // Get the initial energy readings:
-    {
-        let mut config = CONFIG.lock().unwrap();
-
-        // CPU: Get the current energy measurement for RAPL's package domain
-        config
-            .cpu_monitor
-            .update_package_energy(&mut cpu_pkg_data)
-            .expect("[POWER METER] Failed to read CPU energy data");
-        log::debug!("Read initial CPU energy data");
-        // CUDA
-        config
-            .gpu_monitor
-            .update_gpu_energy(&mut cuda_data)
-            .expect("[POWER METER] Failed to read GPU energy data");
-        log::debug!("Read initial GPU energy data");
-    }
 
     // Create/open output files:
     fs::create_dir_all(&CONFIG.lock().unwrap().output_dir)
@@ -128,6 +112,31 @@ fn monitoring_loop(sampling_interval_ms: u64) {
 
     let mut do_monitoring = { CONFIG.lock().unwrap().do_monitoring };
     while do_monitoring {
+        {
+            let mut config = CONFIG.lock().unwrap();
+
+            // Get the initial energy readings (or reset them):
+            if config.do_reset {
+                config.cpu_monitor.reset_data();
+                config.gpu_monitor.reset_data();
+
+                // CPU - Get the current energy measurement for RAPL's package domain:
+                config
+                    .cpu_monitor
+                    .update_package_energy(&mut cpu_pkg_data)
+                    .expect("[POWER METER] Failed to read CPU energy data during reset");
+                // CUDA - Get the current energy measurement with NVML:
+                config
+                    .gpu_monitor
+                    .update_gpu_energy(&mut cuda_data)
+                    .expect("[POWER METER] Failed to read GPU energy data during reset");
+
+                config.do_reset = false;
+
+                log::debug!("Energy and power counters initialized/resetted");
+            }
+        }
+
         // Sleep for the specified sampling interval:
         thread::sleep(Duration::from_millis(sampling_interval_ms));
 
@@ -336,6 +345,13 @@ pub extern "C" fn pwrm_get_total_gpu_energy(
             PwrmResult::NotEnoughData
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pwrm_reset_counters() {
+    log::debug!("Requested reset of energy and power conuters");
+
+    CONFIG.lock().unwrap().do_reset = true;
 }
 
 #[unsafe(no_mangle)]

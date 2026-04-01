@@ -529,6 +529,10 @@ impl CPUMonitor {
         Ok(total_energy)
     }
 
+    pub(super) fn reset_data(&mut self) {
+        self.history.clear();
+    }
+
     pub(super) fn get_processor_tdp(&mut self) -> Result<f64, RAPLUtilsError> {
         if self.vendor_id == Vendor::AMD {
             return Err(RAPLUtilsError {
