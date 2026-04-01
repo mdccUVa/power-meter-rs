@@ -38,10 +38,8 @@ struct MonitoringConfig {
     output_dir: String,
     cpu_monitor: CPUMonitor,
     gpu_monitor: GPUMonitor,
-    cpu_out_filename: String,
-    gpu_out_filename: String,
-    cpu_out: Option<File>,
-    gpu_out: Option<File>,
+    cpu_out_filename: Option<String>,
+    gpu_out_filename: Option<String>,
 }
 
 impl Default for MonitoringConfig {
@@ -55,10 +53,8 @@ impl Default for MonitoringConfig {
             gpu_monitor: GPUMonitor::new(),
             // CUDA: Initialize NVML, number of GPUs, and device handles
             output_dir: "power_meter_out".to_string(),
-            cpu_out_filename: "cpu".to_string(),
-            gpu_out_filename: "gpu".to_string(),
-            cpu_out: None,
-            gpu_out: None,
+            cpu_out_filename: Some("cpu".to_string()),
+            gpu_out_filename: Some("gpu".to_string()),
         }
     }
 }
@@ -82,10 +78,10 @@ fn monitoring_loop(sampling_interval_ms: u64) {
     let mut current_cuda_data = NVMLAux::default();
     let mut cuda_results = NVMLData::default();
 
+    // Get the initial energy readings:
     {
         let mut config = CONFIG.lock().unwrap();
 
-        // Get the initial energy readings:
         // CPU: Get the current energy measurement for RAPL's package domain
         config
             .cpu_monitor
@@ -98,17 +94,36 @@ fn monitoring_loop(sampling_interval_ms: u64) {
             .update_gpu_energy(&mut cuda_data)
             .expect("[POWER METER] Failed to read GPU energy data");
         log::debug!("Read initial GPU energy data");
+    }
 
-        // Write the header for the output files:
-        let output_header = "Power,Energy,Total energy";
-        if let Some(cpu_out) = &mut config.cpu_out {
-            writeln!(cpu_out, "{}", output_header)
-                .expect("[POWER METER] Failed to write CPU output file header");
-        }
-        if let Some(gpu_out) = &mut config.gpu_out {
-            writeln!(gpu_out, "{}", output_header)
-                .expect("[POWER METER] Failed to write GPU output file header");
-        }
+    // Create/open output files:
+    fs::create_dir_all(&CONFIG.lock().unwrap().output_dir)
+        .expect("[POWER METER] Failed to create output directory");
+
+    let mut cpu_out = match CONFIG.lock().unwrap().cpu_out_filename {
+        Some(ref filename) => Some(
+            File::create(Path::new(&CONFIG.lock().unwrap().output_dir).join(filename))
+                .expect("[POWER METER] Failed to create CPU output file"),
+        ),
+        None => None,
+    };
+    let mut gpu_out = match CONFIG.lock().unwrap().gpu_out_filename {
+        Some(ref filename) => Some(
+            File::create(Path::new(&CONFIG.lock().unwrap().output_dir).join(filename))
+                .expect("[POWER METER] Failed to create GPU output file"),
+        ),
+        None => None,
+    };
+
+    // Write the header for the output files:
+    let output_header = "Power,Energy,Total energy";
+    if let Some(cpu_out) = &mut cpu_out {
+        writeln!(cpu_out, "{}", output_header)
+            .expect("[POWER METER] Failed to write CPU output file header");
+    }
+    if let Some(gpu_out) = &mut gpu_out {
+        writeln!(gpu_out, "{}", output_header)
+            .expect("[POWER METER] Failed to write GPU output file header");
     }
 
     let mut do_monitoring = { CONFIG.lock().unwrap().do_monitoring };
@@ -149,8 +164,8 @@ fn monitoring_loop(sampling_interval_ms: u64) {
             swap(&mut cpu_pkg_data, &mut current_cpu_pkg_data);
             swap(&mut cuda_data, &mut current_cuda_data);
 
-            log::debug!("Writing results to file.");
-            if let Some(cpu_out) = &mut config.cpu_out {
+            log::debug!("Writing results to file (if enabled).");
+            if let Some(cpu_out) = &mut cpu_out {
                 writeln!(
                     cpu_out,
                     "{},{},{}",
@@ -158,7 +173,7 @@ fn monitoring_loop(sampling_interval_ms: u64) {
                 )
                 .expect("[POWER METER] Failed to write CPU energy data to file");
             }
-            if let Some(gpu_out) = &mut config.gpu_out {
+            if let Some(gpu_out) = &mut gpu_out {
                 writeln!(
                     gpu_out,
                     "{},{},{}",
@@ -180,16 +195,6 @@ pub extern "C" fn pwrm_launch_monitoring_loop(sampling_interval_ms: u64) {
 
     let mut config = CONFIG.lock().unwrap();
 
-    // Create output files
-    fs::create_dir_all(&config.output_dir)
-        .expect("[POWER METER] Failed to create output directory");
-    let cpu_out_path = Path::new(&config.output_dir).join(&config.cpu_out_filename);
-    let gpu_out_path = Path::new(&config.output_dir).join(&config.gpu_out_filename);
-    config.cpu_out =
-        Some(File::create(cpu_out_path).expect("[POWER METER] Failed to create CPU output file"));
-    config.gpu_out =
-        Some(File::create(gpu_out_path).expect("[POWER METER] Failed to create GPU output file"));
-
     // Launch monitoring on a separate thread:
     config.do_monitoring = true;
     config.monitoring_thread = Some(thread::spawn(move || monitoring_loop(sampling_interval_ms)));
@@ -198,7 +203,7 @@ pub extern "C" fn pwrm_launch_monitoring_loop(sampling_interval_ms: u64) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwrm_stop_monitoring_loop() {
+pub extern "C" fn pwrm_stop_monitoring_loop() -> PwrmResult {
     log::debug!("Requested monitoring loop stop");
 
     // Signal monitoring thread to stop and get its handle
@@ -215,22 +220,30 @@ pub extern "C" fn pwrm_stop_monitoring_loop() {
     };
     // Stop monitoring thread
     if let Some(handle) = maybe_handle {
-        handle
-            .join()
-            .expect("[POWER METER] Failed to join monitoring thread");
+        match handle.join() {
+            Ok(_) => log::info!("Stopped monitoring loop"),
+            Err(e) => {
+                log::error!("Failed to stop monitoring loop: {:?}", e);
+                return PwrmResult::MonitoringError;
+            }
+        }
+    } else {
+        log::debug!("Monitoring loop was not running, nothing to stop");
     }
 
-    log::info!("Stopped monitoring loop");
+    PwrmResult::Success
 }
 
 #[repr(C)]
-pub enum PwrmError {
+pub enum PwrmResult {
     Success = 0,
-    NotEnoughData = -1,
+    PathError = -1,
+    MonitoringError = -2,
+    NotEnoughData = -3,
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwrm_get_avg_cpu_power(avg_power_out: *mut std::os::raw::c_double) -> PwrmError {
+pub extern "C" fn pwrm_get_avg_cpu_power(avg_power_out: *mut std::os::raw::c_double) -> PwrmResult {
     let config = CONFIG.lock().unwrap();
 
     let avg_power = config.cpu_monitor.get_average_power();
@@ -239,7 +252,7 @@ pub extern "C" fn pwrm_get_avg_cpu_power(avg_power_out: *mut std::os::raw::c_dou
             unsafe {
                 *avg_power_out = power;
             }
-            PwrmError::Success as PwrmError
+            PwrmResult::Success as PwrmResult
         }
         Err(e) => {
             assert!(e.kind == RAPLUtilsErrorKind::NotEnoughData);
@@ -247,13 +260,13 @@ pub extern "C" fn pwrm_get_avg_cpu_power(avg_power_out: *mut std::os::raw::c_dou
             unsafe {
                 *avg_power_out = 0.0;
             };
-            PwrmError::NotEnoughData as PwrmError
+            PwrmResult::NotEnoughData as PwrmResult
         }
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwrm_get_avg_gpu_power(avg_power_out: *mut std::os::raw::c_double) -> PwrmError {
+pub extern "C" fn pwrm_get_avg_gpu_power(avg_power_out: *mut std::os::raw::c_double) -> PwrmResult {
     let config = CONFIG.lock().unwrap();
 
     let avg_power = config.gpu_monitor.get_average_power();
@@ -262,7 +275,7 @@ pub extern "C" fn pwrm_get_avg_gpu_power(avg_power_out: *mut std::os::raw::c_dou
             unsafe {
                 *avg_power_out = power;
             }
-            PwrmError::Success as PwrmError
+            PwrmResult::Success as PwrmResult
         }
         Err(e) => {
             assert!(e.kind == NVMLUtilsErrorKind::NotEnoughData);
@@ -270,7 +283,7 @@ pub extern "C" fn pwrm_get_avg_gpu_power(avg_power_out: *mut std::os::raw::c_dou
             unsafe {
                 *avg_power_out = 0.0;
             };
-            PwrmError::NotEnoughData as PwrmError
+            PwrmResult::NotEnoughData as PwrmResult
         }
     }
 }
@@ -278,7 +291,7 @@ pub extern "C" fn pwrm_get_avg_gpu_power(avg_power_out: *mut std::os::raw::c_dou
 #[unsafe(no_mangle)]
 pub extern "C" fn pwrm_get_total_cpu_energy(
     total_energy_out: *mut std::os::raw::c_double,
-) -> PwrmError {
+) -> PwrmResult {
     let config = CONFIG.lock().unwrap();
 
     let total_energy = config.cpu_monitor.get_total_energy();
@@ -287,7 +300,7 @@ pub extern "C" fn pwrm_get_total_cpu_energy(
             unsafe {
                 *total_energy_out = energy;
             }
-            PwrmError::Success as PwrmError
+            PwrmResult::Success as PwrmResult
         }
         Err(e) => {
             assert!(e.kind == RAPLUtilsErrorKind::NotEnoughData);
@@ -295,7 +308,7 @@ pub extern "C" fn pwrm_get_total_cpu_energy(
             unsafe {
                 *total_energy_out = 0.0;
             };
-            PwrmError::NotEnoughData as PwrmError
+            PwrmResult::NotEnoughData as PwrmResult
         }
     }
 }
@@ -303,7 +316,7 @@ pub extern "C" fn pwrm_get_total_cpu_energy(
 #[unsafe(no_mangle)]
 pub extern "C" fn pwrm_get_total_gpu_energy(
     total_energy_out: *mut std::os::raw::c_double,
-) -> PwrmError {
+) -> PwrmResult {
     let config = CONFIG.lock().unwrap();
 
     let total_energy = config.gpu_monitor.get_total_energy();
@@ -312,7 +325,7 @@ pub extern "C" fn pwrm_get_total_gpu_energy(
             unsafe {
                 *total_energy_out = energy;
             }
-            PwrmError::Success
+            PwrmResult::Success
         }
         Err(e) => {
             assert!(e.kind == NVMLUtilsErrorKind::NotEnoughData);
@@ -320,49 +333,114 @@ pub extern "C" fn pwrm_get_total_gpu_energy(
             unsafe {
                 *total_energy_out = 0.0;
             };
-            PwrmError::NotEnoughData
+            PwrmResult::NotEnoughData
         }
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwrm_set_output_dir(path_ptr: *const std::os::raw::c_char) {
+pub extern "C" fn pwrm_set_output_dir(path_ptr: *const std::os::raw::c_char) -> PwrmResult {
     let mut config = CONFIG.lock().unwrap();
 
-    let path_arr = unsafe { std::ffi::CStr::from_ptr(path_ptr) };
-    let path = path_arr
-        .to_str()
-        .expect("[POWER METER] Invalid output directory string");
+    if path_ptr.is_null() {
+        log::warn!(
+            "[POWER METER] Provided a null output directory path; defaulting to current dir"
+        );
+        config.output_dir = "./".to_string();
 
+        return PwrmResult::Success;
+    }
+
+    let path_arr = unsafe { std::ffi::CStr::from_ptr(path_ptr) };
+    let path = match path_arr.to_str() {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!("[POWER METER] Invalid output directory string: {}", e);
+
+            return PwrmResult::PathError;
+        }
+    };
     config.output_dir = path.to_string();
 
     log::debug!("Changed output directory to {}", path);
+
+    PwrmResult::Success
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwrm_set_cpu_out_filename(filename_ptr: *const std::os::raw::c_char) {
+pub extern "C" fn pwrm_set_cpu_out_filename(
+    filename_ptr: *const std::os::raw::c_char,
+) -> PwrmResult {
     let mut config = CONFIG.lock().unwrap();
 
-    let filename_arr = unsafe { std::ffi::CStr::from_ptr(filename_ptr) };
-    let filename = filename_arr
-        .to_str()
-        .expect("[POWER METER] Invalid CPU output filename string");
+    if filename_ptr.is_null() {
+        log::info!("[POWER METER] Provided a null CPU output filename; disabling CPU output file");
+        config.cpu_out_filename = None;
 
-    config.cpu_out_filename = filename.to_string();
+        return PwrmResult::Success;
+    }
+
+    let filename_arr = unsafe { std::ffi::CStr::from_ptr(filename_ptr) };
+    let filename = match filename_arr.to_str() {
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("[POWER METER] Invalid CPU output filename string: {}", e);
+
+            return PwrmResult::PathError;
+        }
+    };
+
+    if filename.len() == 0 {
+        log::info!(
+            "[POWER METER] Provided an empty CPU output filename; disabling CPU output file"
+        );
+        config.cpu_out_filename = None;
+
+        return PwrmResult::Success;
+    }
+
+    config.cpu_out_filename = Some(filename.to_string());
 
     log::debug!("Changed CPU output file name to {}", filename);
+
+    PwrmResult::Success
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pwrm_set_gpu_out_filename(filename_ptr: *const std::os::raw::c_char) {
+pub extern "C" fn pwrm_set_gpu_out_filename(
+    filename_ptr: *const std::os::raw::c_char,
+) -> PwrmResult {
     let mut config = CONFIG.lock().unwrap();
 
-    let filename_arr = unsafe { std::ffi::CStr::from_ptr(filename_ptr) };
-    let filename = filename_arr
-        .to_str()
-        .expect("[POWER METER] Invalid GPU output filename string");
+    if filename_ptr.is_null() {
+        log::info!("[POWER METER] Provided a null GPU output filename; disabling GPU output file");
+        config.gpu_out_filename = None;
 
-    config.gpu_out_filename = filename.to_string();
+        return PwrmResult::Success;
+    }
+
+    let filename_arr = unsafe { std::ffi::CStr::from_ptr(filename_ptr) };
+    let filename = match filename_arr.to_str() {
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("[POWER METER] Invalid GPU output filename string: {}", e);
+
+            return PwrmResult::PathError;
+        }
+    };
+
+    if filename.len() == 0 {
+        log::info!(
+            "[POWER METER] Provided an empty GPU output filename; disabling GPU output file"
+        );
+        config.gpu_out_filename = None;
+
+        return PwrmResult::Success;
+    }
+
+    config.gpu_out_filename = Some(filename.to_string());
 
     log::debug!("Changed GPU output file name to {}", filename);
+
+    PwrmResult::Success
 }

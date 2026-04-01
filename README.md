@@ -24,7 +24,7 @@ To use it in your C/C++ project, include `include/power_meter.h` in your relevan
 // Starts monitoring the power usage and energy consumption of the system's CPU and GPU at the specified sampling interval (in milliseconds).
 void pwrm_launch_monitoring_loop(uint64_t sampling_interval_ms);
 // Stops monitoring the power usage and energy consumption of the system.
-void pwrm_stop_monitoring_loop(void);
+pwrmError_t pwrm_stop_monitoring_loop(void);
 
 // Gets the CPU's average power usage so far:
 pwrmError_t pwrm_get_avg_cpu_power(double *avg_power_out);
@@ -35,23 +35,35 @@ pwrmError_t pwrm_get_total_cpu_energy(double *total_energy_out);
 // Gets the CPU's total energy consumption so far:
 pwrmError_t pwrm_get_total_gpu_energy(double *total_energy_out);
 
-// Sets the path of the output directory where the measured data will be saved (optional, "power_meter_out" by default).
-void pwrm_set_output_dir(const char *path_ptr);
-// Sets the name for the output file containing the CPU data (optional, "cpu" by default).
-void pwrm_set_cpu_out_filename(const char *filename_ptr);
-// Sets the name for the output file containing the GPU data (optional, "gpu" by default).
-void pwrm_set_gpu_out_filename(const char *filename_ptr);
+// Sets the path of the output directory where the measured data will be saved
+// (optional, "power_meter_out" by default, NULL uses the current directory).
+pwrmError_t pwrm_set_output_dir(const char *path_ptr);
+// Sets the name for the output file containing the CPU data
+// (optional, "cpu" by default; NULL or "" deactivate it).
+pwrmError_t pwrm_set_cpu_out_filename(const char *filename_ptr);
+// Sets the name for the output file containing the GPU data
+// (optional, "gpu" by default; NULL or "" deactivate it).
+pwrmError_t pwrm_set_gpu_out_filename(const char *filename_ptr);
 ```
 
-Therefore, to measure power usage and energy consumption for a specific part of your application, you would do:
+Therefore, an example program that uses `libpwrm` to measure power usage and energy consumption could be the following:
 ```c
 #include "power_meter.h"
 
 int main(void) {
-	// Set the output directory and file names (optional):
-	pwrm_set_output_dir("energy_measurements");
-	pwrm_set_cpu_out_filename("cpu_data");
-	pwrm_set_gpu_out_filename("gpu_data");
+	// (Optional) set the output directory and file names:
+    if (pwrm_set_output_dir("energy_measurements") != PWRM_SUCCESS) {
+        fprintf(stderr, "Error setting output directory.\n");
+        exit(EXIT_FAILURE);
+    }
+	if (pwrm_set_cpu_out_filename("cpu_data") != PWRM_SUCCESS) {
+        fprintf(stderr, "Error setting CPU output filename.\n");
+        exit(EXIT_FAILURE);
+    }
+	if (pwrm_set_gpu_out_filename("gpu_data") != PWRM_SUCCESS) {
+        fprintf(stderr, "Error setting GPU output filename.\n");
+        exit(EXIT_FAILURE);
+    }
 
 	// Start monitoring with a sampling interval of 500 ms:
 	pwrm_launch_monitoring_loop(500);
@@ -60,9 +72,12 @@ int main(void) {
 	// ...
 
 	// Stop monitoring when done:
-	pwrm_stop_monitoring_loop();
+	if (pwrm_stop_monitoring_loop() != PWRM_SUCCESS) {
+        fprintf(stderr, "There was an error with the monitoring thread.\n");
+        exit(EXIT_FAILURE);
+    }
 
-	// Print energy consumption and power usage data:
+	// Additionally, print energy consumption and power usage data to stdout:
 	double cpu_power, gpu_power, cpu_energy, gpu_energy;
 	if (pwrm_get_avg_cpu_power(&cpu_power) != PWRM_SUCCESS) {
 		fprintf(stderr, "Error computing average CPU power.\n");
