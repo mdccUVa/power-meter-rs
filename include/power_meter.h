@@ -26,9 +26,10 @@ extern "C" {
 
 typedef enum PwrmError {
   PWRM_SUCCESS = 0,
-  PWRM_PATH_ERROR = -1,
-  PWRM_MONITORING_ERROR = -2,
-  PWRM_NOT_ENOUGH_DATA = -3,
+  PWRM_FEATURE_NOT_ENABLED = -1,
+  PWRM_PATH_ERROR = -2,
+  PWRM_MONITORING_ERROR = -3,
+  PWRM_NOT_ENOUGH_DATA = -4,
 } pwrmResult_t;
 
 void pwrm_launch_monitoring_loop(uint64_t sampling_interval_ms);
