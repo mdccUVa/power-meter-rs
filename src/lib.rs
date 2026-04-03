@@ -53,14 +53,14 @@ impl Default for MonitoringConfig {
             do_monitoring: true,
             do_reset: true,
             monitoring_thread: None,
+            output_dir: "power_meter_out".to_string(),
             // Intel: Initialize internal counters
             cpu_monitor: CPUMonitor::new()
                 .expect("[POWER METER] An error was encountered during initialization"),
+            cpu_out_filename: Some("cpu".to_string()),
             #[cfg(feature = "nvidia")]
             gpu_monitor: GPUMonitor::new(),
             // CUDA: Initialize NVML, number of GPUs, and device handles
-            output_dir: "power_meter_out".to_string(),
-            cpu_out_filename: Some("cpu".to_string()),
             #[cfg(feature = "nvidia")]
             gpu_out_filename: Some("gpu".to_string()),
         }

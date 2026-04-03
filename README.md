@@ -59,7 +59,7 @@ Therefore, an example program that uses `libpwrm` to measure power usage and ene
 
 int main(void) {
 	// (Optional) set the output directory and file names:
-	pwrm_set_output_dir("energy_measurements"); // No need to check the result if the path is a correct string.
+	pwrm_set_output_dir("enegy"); // No need to check the result if the path is a correct string.
 	pwrm_set_cpu_out_filename("cpu_data"); // No need to check the result if the name is a correct string.
 	pwrm_set_gpu_out_filename("gpu_data"); // No need to check the result if the name is a correct string.
 
@@ -69,7 +69,7 @@ int main(void) {
 	// Your application code goes here:
 	// ...
 
-	// Result data will be written to `./energy_measurements/cpu_data` and `./energy_measurements/gpu_data`.
+	// Result data will be written to `./enegy/cpu_data` and `./enegy/gpu_data`.
 
 	// Stop monitoring when done:
 	if (pwrm_stop_monitoring_loop() != PWRM_SUCCESS) {
@@ -88,11 +88,11 @@ int main(void) {
 		exit(EXIT_FAILURE);
 	}
 	if (pwrm_get_total_cpu_energy(&cpu_energy) != PWRM_SUCCESS) {
-		fprintf(stderr, "No measures registered, cannot retrieve the total CPU energy consumption.\n");
+		fprintf(stderr, "No measures registered, cannot retrieve the CPU energy consumption.\n");
 		exit(EXIT_FAILURE);
 	}
 	if (pwrm_get_total_gpu_energy(&gpu_energy) != PWRM_SUCCESS) {
-		fprintf(stderr, "No measures registered, cannot retrieve the total GPU energy consumption.\n");
+		fprintf(stderr, "No measures registered, cannot retrieve the GPU energy consumption.\n");
 		exit(EXIT_FAILURE);
 	}
 	printf("Average power usage: CPU %lf W, GPU %lf W\n", cpu_power, gpu_power);
