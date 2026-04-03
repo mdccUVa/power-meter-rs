@@ -59,47 +59,40 @@ Therefore, an example program that uses `libpwrm` to measure power usage and ene
 
 int main(void) {
 	// (Optional) set the output directory and file names:
-    if (pwrm_set_output_dir("energy_measurements") != PWRM_SUCCESS) {
-        fprintf(stderr, "Error setting output directory.\n");
-        exit(EXIT_FAILURE);
-    }
-	if (pwrm_set_cpu_out_filename("cpu_data") != PWRM_SUCCESS) {
-        fprintf(stderr, "Error setting CPU output filename.\n");
-        exit(EXIT_FAILURE);
-    }
-	if (pwrm_set_gpu_out_filename("gpu_data") != PWRM_SUCCESS) {
-        fprintf(stderr, "Error setting GPU output filename.\n");
-        exit(EXIT_FAILURE);
-    }
+	pwrm_set_output_dir("energy_measurements"); // No need to check the result if the path is a correct string.
+	pwrm_set_cpu_out_filename("cpu_data"); // No need to check the result if the name is a correct string.
+	pwrm_set_gpu_out_filename("gpu_data"); // No need to check the result if the name is a correct string.
 
 	// Start monitoring with a sampling interval of 500 ms:
 	pwrm_launch_monitoring_loop(500);
 
-	// Your application code here:
+	// Your application code goes here:
 	// ...
+
+	// Result data will be written to `./energy_measurements/cpu_data` and `./energy_measurements/gpu_data`.
 
 	// Stop monitoring when done:
 	if (pwrm_stop_monitoring_loop() != PWRM_SUCCESS) {
-        fprintf(stderr, "There was an error with the monitoring thread.\n");
-        exit(EXIT_FAILURE);
-    }
+		fprintf(stderr, "There was an error with the monitoring thread.\n");
+		exit(EXIT_FAILURE);
+	}
 
 	// Additionally, print energy consumption and power usage data to stdout:
 	double cpu_power, gpu_power, cpu_energy, gpu_energy;
 	if (pwrm_get_avg_cpu_power(&cpu_power) != PWRM_SUCCESS) {
-		fprintf(stderr, "Error computing average CPU power.\n");
+		fprintf(stderr, "Not enough measures to compute the average CPU power.\n");
 		exit(EXIT_FAILURE);
 	}
 	if (pwrm_get_avg_gpu_power(&gpu_power) != PWRM_SUCCESS) {
-		fprintf(stderr, "Error computing average GPU power.\n");
+		fprintf(stderr, "Not enough measures to compute the average GPU power.\n");
 		exit(EXIT_FAILURE);
 	}
 	if (pwrm_get_total_cpu_energy(&cpu_energy) != PWRM_SUCCESS) {
-		fprintf(stderr, "Error computing total CPU energy.\n");
+		fprintf(stderr, "No measures registered, cannot retrieve the total CPU energy consumption.\n");
 		exit(EXIT_FAILURE);
 	}
 	if (pwrm_get_total_gpu_energy(&gpu_energy) != PWRM_SUCCESS) {
-		fprintf(stderr, "Error computing total GPU energy.\n");
+		fprintf(stderr, "No measures registered, cannot retrieve the total GPU energy consumption.\n");
 		exit(EXIT_FAILURE);
 	}
 	printf("Average power usage: CPU %lf W, GPU %lf W\n", cpu_power, gpu_power);
