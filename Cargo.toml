@@ -1,6 +1,6 @@
 [package]
 name = "pwrm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Manuel de Castro <manuel@infor.uva.es>"]
 repository = "https://github.com/mdccUVa/power-meter-gs"
@@ -15,3 +15,7 @@ lto = "thin"
 [dependencies]
 env_logger = { version = "0.11.10", default-features = false, features = ["auto-color", "color", "humantime"] }
 log = "0.4.29"
+
+[features]
+default = ["nvidia"]
+nvidia = []
