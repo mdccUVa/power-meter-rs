@@ -59,7 +59,7 @@ Therefore, an example program that uses `libpwrm` to measure power usage and ene
 
 int main(void) {
 	// (Optional) set the output directory and file names:
-	pwrm_set_output_dir("enegy"); // No need to check the result if the path is a correct string.
+	pwrm_set_output_dir("energy"); // No need to check the result if the path is a correct string.
 	pwrm_set_cpu_out_filename("cpu_data"); // No need to check the result if the name is a correct string.
 	pwrm_set_gpu_out_filename("gpu_data"); // No need to check the result if the name is a correct string.
 
@@ -69,7 +69,7 @@ int main(void) {
 	// Your application code goes here:
 	// ...
 
-	// Result data will be written to `./enegy/cpu_data` and `./enegy/gpu_data`.
+	// Result data will be written to `./energy/cpu_data` and `./energy/gpu_data`.
 
 	// Stop monitoring when done:
 	if (pwrm_stop_monitoring_loop() != PWRM_SUCCESS) {
